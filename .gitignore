@@ -1,0 +1,6 @@
+/calibration
+*.pyc
+.spyderproject
+/.vscode
+*/archive
+/Stockfish
