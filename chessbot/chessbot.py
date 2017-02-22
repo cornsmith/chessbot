@@ -16,6 +16,7 @@ from chess import polyglot
 from chess import uci
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 
 CHESSBOARD_SQUARES = 64
@@ -200,9 +201,22 @@ def square_has_piece(sq_img):
 
     # TODO: turn this into a model instead of hard-coding parameters
     scores, x_img = piece_edge_scores(sq_img)
-    has_piece = (scores[0] > 6) + (scores[1] > 6) + (scores[2] > 6) + (scores[3] > 6) + (scores[4] > 300) > 2
+    has_piece = (scores[0] > 6) + (scores[1] > 8) + (scores[2] > 6) + (scores[3] > 8) + (scores[4] > 300) > 2
 
     return has_piece, scores, x_img
+
+
+def fit_piece_presence(board_img):
+
+    X = []
+    for sq in range(CHESSBOARD_SQUARES):
+        sq_img = get_square_image(board_img, sq)
+        shp, ss, test_img = square_has_piece(sq_img)
+        X.append(ss)
+
+    scaler = StandardScaler()
+    scaler.fit(X)
+    return scaler
 
 
 def fit_piece_colours(board_img):
@@ -241,7 +255,15 @@ def fit_piece_colours(board_img):
     neigh2 = KNeighborsClassifier(n_neighbors=3)
     neigh2.fit(X2, labels2)
 
-    # Measure performance - cheat and show predicted values on training set
+    return (neigh1, neigh2)
+
+
+def fit_performance(board_img, piece_model):
+    '''
+    Measure performance - cheat and show predicted values on training set
+    '''
+    neigh1, neigh2 = piece_model
+
     squares = []
     for sq in range(CHESSBOARD_SQUARES):
         sq_img = get_square_image(board_img, sq)
@@ -259,8 +281,6 @@ def fit_piece_colours(board_img):
             squares.append('0')
 
     print('Current predicted values', ''.join(squares))
-
-    return (neigh1, neigh2)
 
 
 def format_squares_piece_text(sq_pc):
@@ -354,7 +374,11 @@ def label_squares(board_img, recom_move=None, alpha=0.2):
 
 def detect_move(board1, board2, meth='string', board=None):
     def input_move():
-        input_move = input('Legal move not detected. Input UCI move: ')
+        legal_moves = [x.uci() for x in board.legal_moves]
+        while True:
+            input_move = input(('\n---------------------------\n').join(['', 'Legal UCI move not detected. Legal moves:', str(legal_moves), 'Input move: ']))
+            if input_move in legal_moves:
+                break
         from_sq = chess.SQUARE_NAMES.index(input_move[0:2])
         to_sq = chess.SQUARE_NAMES.index(input_move[2:4])
         return from_sq, to_sq
@@ -503,12 +527,17 @@ def calibrate(args):
         # train piece detection model as save to file
         calib_img2 = project_board(calib_img, corners=corners)
         piece_model = fit_piece_colours(calib_img2)
+
+        # performance
+        fit_performance(calib_img2, piece_model)
+
         with open('./calibration/piece_model.pkl', 'wb') as f:
             pickle.dump(piece_model, f)
         print('Piece model trained and saved')
 
         # save second board calibration image
         cv2.imwrite('./calibration/starting-board-projected.jpg', calib_img2)
+
 
         print('Calibration step 2 completed')
 
@@ -589,9 +618,8 @@ def play(args):
             prev_board_img = curr_board_img
 
         # detect move
-
         curr_sq_pc = get_piece_colours(curr_board_img)
-        curr_move = detect_move(sq_pc, curr_sq_pc)
+        curr_move = detect_move(sq_pc, curr_sq_pc, board=board)
         curr_move2 = detect_move(curr_board_img, prev_board_img, meth='image diff', board=board)
         print(sq_pc, 'prev')
         print(curr_sq_pc, 'curr')
@@ -646,7 +674,7 @@ if __name__ == '__main__':
         help="Move time limit for engine (ms)",
         default=1000
     )
-    
+
     args = parser.parse_args()
 
     CAMERA_INDEX = args.camera

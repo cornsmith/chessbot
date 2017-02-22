@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y \
 	build-essential \
 	cmake \
 	git \
+	libcanberra-gtk-module \
 	libgtk2.0-dev \
 	libjasper-dev \
 	libjpeg-dev \
@@ -33,3 +34,11 @@ RUN cd && \
 	make install && \
 	cd && \
 	rm 3.1.0.zip
+
+RUN cd && \
+	git clone https://github.com/cornsmith/chessbot.git && \
+	cd ~/chessbot && \
+	mkdir calibration && \
+	git clone https://github.com/official-stockfish/Stockfish.git && \
+	cd Stockfish/src && \
+	make profile-build ARCH=x86-64

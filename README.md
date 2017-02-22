@@ -1,9 +1,19 @@
 ## Setup
-TODO
-git clone ...
-mkdir calibration
-mkdir Stockfish
-...
+```
+git clone https://github.com/cornsmith/chessbot.git  
+cd chessbot  
+mkdir calibration  
+git clone https://github.com/official-stockfish/Stockfish.git  
+cd Stockfish/src  
+make profile-build ARCH=x8 
+```
+
+Alternatively use the docker image
+```
+docker build -t chessbot .
+. Dockerrun.sh
+```
+
 
 ## Usage
 Calibration - 2 steps
@@ -17,7 +27,7 @@ Play
 python chessbot/chessbot.py
 ```
 
-### Using test images
+### Using test images / demo
 
 ```
 python chessbot/chessbot.py --calibrate=1 --camera=-1 
