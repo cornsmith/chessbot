@@ -174,27 +174,22 @@ def piece_edge_scores(sq_img):
     bw_sq_img = apply_threshold(sq_img)
     bw_m_sq_img = get_masked_circle(bw_sq_img)
 
-    # edge score 1 - circle masked RGB
-    edges1 = cv2.Canny(masked, 50, 100, 3)
-    e1_score = int(np.mean(edges1))
-
-    # edge score 2 - circle masked BW
-    edges2 = cv2.Canny(bw_m_sq_img, 50, 100, 3)
-    e2_score = int(np.mean(edges2))
-
-    # edge score 1 - circle masked RGB
-    edges1 = cv2.Canny(masked, 100, 150, 3)
-    e3_score = int(np.mean(edges1))
-
-    # edge score 2 - circle masked BW
-    edges2 = cv2.Canny(bw_m_sq_img, 100, 150, 3)
-    e4_score = int(np.mean(edges2))
-
-    # contour score 1 - circle masked BW
-    _, contours, _ = cv2.findContours(bw_m_sq_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # contour score 1 - BW
+    _, contours, _ = cv2.findContours(bw_sq_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     c1_score = sum([len(x.flatten()) for x in contours])
 
-    return [e1_score, e2_score, e3_score, e4_score, c1_score], masked
+    # contour score 2 - circle masked BW
+    _, contours, _ = cv2.findContours(bw_m_sq_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    c2_score = sum([len(x.flatten()) for x in contours])
+
+    return [
+        np.mean(cv2.Canny(masked, 50, 100, 3)), # circle masked RGB
+        np.mean(cv2.Canny(bw_m_sq_img, 50, 100, 3)), # circle masked BW
+        np.mean(cv2.Canny(masked, 100, 150, 3)), # circle masked RGB
+        np.mean(cv2.Canny(bw_m_sq_img, 100, 150, 3)), # circle masked BW
+        c1_score,
+        c2_score
+    ], masked
 
 
 def square_has_piece(sq_img, presence_model):
@@ -240,7 +235,7 @@ def fit_piece_presence(board_img):
     model = LogisticRegression()
     model = model.fit(X_scaled, labels)
 
-    # summarise the fit of the model
+    # performance
     #predicted = model.predict(X_scaled)
     #print(metrics.confusion_matrix(labels, predicted))
     #print(metrics.classification_report(labels, predicted))
@@ -268,7 +263,7 @@ def fit_piece_colours(board_img):
         # get feature signature for square
         sq_img = get_square_image(board_img, sq)
         hist = radial_gray_hist(sq_img)
-        cv2.imwrite('./calibration/sq_{0}.jpg'.format(sq), sq_img)
+        #cv2.imwrite('./calibration/sq_{0}.jpg'.format(sq), sq_img)
 
         # prepare 2 datasets for alternating squares
         if not 15 < sq < 48:
@@ -299,8 +294,8 @@ def fit_performance(board_img, piece_model, presence_model):
         hist = radial_gray_hist(sq_img)
         hist = np.array(hist).reshape(1, -1)
         shp, ss, test_img = square_has_piece(sq_img, presence_model)
-        print(sq, ss)
-        cv2.imwrite('./calibration/m_{0}.jpg'.format(sq), test_img)
+        print(sq, [int(s) for s in ss])
+        #cv2.imwrite('./calibration/m_{0}.jpg'.format(sq), test_img)
         if shp:
             if sq % 2 == (sq // 8) % 2:
                 squares.append(neigh1.predict(hist)[0])
@@ -436,7 +431,10 @@ def detect_move(board1, board2, meth='string', board=None):
         if changes == 0:
             return None
         elif changes == 2:
-            return from_sq, to_sq
+            try:
+                return from_sq, to_sq
+            except:
+                return input_move()
         # castling
         elif changes == 4:
             # naive checking for castling
