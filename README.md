@@ -28,7 +28,6 @@ python chessbot/chessbot.py
 ```
 
 ### Using test images / demo
-
 ```
 python chessbot/chessbot.py --calibrate=1 --camera=-1 
 python chessbot/chessbot.py --calibrate=2 --camera=-1

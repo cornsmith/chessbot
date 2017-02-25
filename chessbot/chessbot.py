@@ -11,13 +11,13 @@ import argparse
 import cv2
 import numpy as np
 import chess
-
 from chess import polyglot
 from chess import uci
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn import metrics
 from sklearn.cluster import KMeans
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
-
 
 CHESSBOARD_SQUARES = 64
 CHESSBOARD_WIDTH = 8
@@ -97,6 +97,7 @@ def project_board(img, corners):
     w = h = SQUARE_WIDTH * CHESSBOARD_WIDTH
     board_img = np.zeros((w, h, img.shape[2]), np.uint8)
 
+    # project each of the squares
     for x in range(CHESSBOARD_WIDTH):
         for y in range(CHESSBOARD_WIDTH):
             board_img[
@@ -147,76 +148,104 @@ def radial_gray_hist(sq_img):
     return hist
 
 
-def square_has_piece(sq_img):
+def piece_edge_scores(sq_img):
+    """
+    Returns a list of scores + a masked image used in scores from a square image
+    """
+    def get_masked_circle(img):
+        try:
+            h, w, _ = img.shape
+        except:
+            h, w = img.shape
+        circle_img = np.zeros((h, w), np.uint8)
+        cv2.circle(circle_img, (int(w / 2), int(h / 2)), int(SQUARE_WIDTH / 3), 1, thickness=-1)
+        masked_img = cv2.bitwise_and(img, img, mask=circle_img)
+        return masked_img
+
+    def apply_threshold(img):
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img = cv2.GaussianBlur(img, (5, 5), 0)
+        img = cv2.adaptiveThreshold(
+            img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        return img
+
+    # create copies with transformations / masks
+    masked = get_masked_circle(sq_img)
+    bw_sq_img = apply_threshold(sq_img)
+    bw_m_sq_img = get_masked_circle(bw_sq_img)
+
+    # edge score 1 - circle masked RGB
+    edges1 = cv2.Canny(masked, 50, 100, 3)
+    e1_score = int(np.mean(edges1))
+
+    # edge score 2 - circle masked BW
+    edges2 = cv2.Canny(bw_m_sq_img, 50, 100, 3)
+    e2_score = int(np.mean(edges2))
+
+    # edge score 1 - circle masked RGB
+    edges1 = cv2.Canny(masked, 100, 150, 3)
+    e3_score = int(np.mean(edges1))
+
+    # edge score 2 - circle masked BW
+    edges2 = cv2.Canny(bw_m_sq_img, 100, 150, 3)
+    e4_score = int(np.mean(edges2))
+
+    # contour score 1 - circle masked BW
+    _, contours, _ = cv2.findContours(bw_m_sq_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    c1_score = sum([len(x.flatten()) for x in contours])
+
+    return [e1_score, e2_score, e3_score, e4_score, c1_score], masked
+
+
+def square_has_piece(sq_img, presence_model):
     """
     Returns True / False on whether a square image has a piece in it (any colour)
     """
-    def piece_edge_scores(sq_img):
-        """
-        Returns a list of scores + a masked image used in scores from a square image
-        """
-        def get_masked_circle(img):
-            try:
-                h, w, _ = img.shape
-            except:
-                h, w = img.shape
-            circle_img = np.zeros((h, w), np.uint8)
-            cv2.circle(circle_img, (int(w / 2), int(h / 2)), int(SQUARE_WIDTH / 3), 1, thickness=-1)
-            masked_img = cv2.bitwise_and(img, img, mask=circle_img)
-            return masked_img
-
-        def apply_threshold(img):
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            img = cv2.GaussianBlur(img, (5, 5), 0)
-            img = cv2.adaptiveThreshold(
-                img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-            return img
-
-        # create copies with transformations / masks
-        masked = get_masked_circle(sq_img)
-        bw_sq_img = apply_threshold(sq_img)
-        bw_m_sq_img = get_masked_circle(bw_sq_img)
-
-        # edge score 1 - circle masked RGB
-        edges1 = cv2.Canny(masked, 50, 100, 3)
-        e1_score = int(np.mean(edges1))
-
-        # edge score 2 - circle masked BW
-        edges2 = cv2.Canny(bw_m_sq_img, 50, 100, 3)
-        e2_score = int(np.mean(edges2))
-
-        # edge score 1 - circle masked RGB
-        edges1 = cv2.Canny(masked, 100, 150, 3)
-        e3_score = int(np.mean(edges1))
-
-        # edge score 2 - circle masked BW
-        edges2 = cv2.Canny(bw_m_sq_img, 100, 150, 3)
-        e4_score = int(np.mean(edges2))
-
-        # contour score 1 - circle masked BW
-        _, contours, _ = cv2.findContours(bw_m_sq_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        c1_score = sum([len(x.flatten()) for x in contours])
-
-        return [e1_score, e2_score, e3_score, e4_score, c1_score], masked
-
-    # TODO: turn this into a model instead of hard-coding parameters
     scores, x_img = piece_edge_scores(sq_img)
-    has_piece = (scores[0] > 6) + (scores[1] > 8) + (scores[2] > 6) + (scores[3] > 8) + (scores[4] > 300) > 2
+
+    # hardcoded thresholds
+    #has_piece = (scores[0] > 6) + (scores[1] > 8) + (scores[2] > 6) + (scores[3] > 8) + (scores[4] > 300) > 2
+
+    # model
+    scaler, model = presence_model
+    has_piece = model.predict(scaler.transform(np.array(scores, np.float64).reshape(1, -1))) == 1
 
     return has_piece, scores, x_img
 
 
 def fit_piece_presence(board_img):
+    """
+    Build model for detecting whether a square has {
+        1 - any piece
+        0 - no piece
+    }
+    Assumes board_img is an calibrated image at starting position
+    """
+    # default calibration layout
+    labels = [int(x) for x in '1' * 16 + '0' * 32 + '1' * 16]
 
+    # features
     X = []
     for sq in range(CHESSBOARD_SQUARES):
         sq_img = get_square_image(board_img, sq)
-        shp, ss, test_img = square_has_piece(sq_img)
+        ss, _ = piece_edge_scores(sq_img)
         X.append(ss)
 
+    # standardise
     scaler = StandardScaler()
-    scaler.fit(X)
-    return scaler
+    scaler = scaler.fit(X)
+    X_scaled = scaler.transform(X)
+
+    # model
+    model = LogisticRegression()
+    model = model.fit(X_scaled, labels)
+
+    # summarise the fit of the model
+    #predicted = model.predict(X_scaled)
+    #print(metrics.confusion_matrix(labels, predicted))
+    #print(metrics.classification_report(labels, predicted))
+
+    return scaler, model
 
 
 def fit_piece_colours(board_img):
@@ -258,7 +287,7 @@ def fit_piece_colours(board_img):
     return (neigh1, neigh2)
 
 
-def fit_performance(board_img, piece_model):
+def fit_performance(board_img, piece_model, presence_model):
     '''
     Measure performance - cheat and show predicted values on training set
     '''
@@ -269,7 +298,7 @@ def fit_performance(board_img, piece_model):
         sq_img = get_square_image(board_img, sq)
         hist = radial_gray_hist(sq_img)
         hist = np.array(hist).reshape(1, -1)
-        shp, ss, test_img = square_has_piece(sq_img)
+        shp, ss, test_img = square_has_piece(sq_img, presence_model)
         print(sq, ss)
         cv2.imwrite('./calibration/m_{0}.jpg'.format(sq), test_img)
         if shp:
@@ -284,6 +313,9 @@ def fit_performance(board_img, piece_model):
 
 
 def format_squares_piece_text(sq_pc):
+    """
+    Pretty print board layout
+    """
     i = 0
     sq_pc_formatted = []
     for pc in sq_pc:
@@ -298,7 +330,9 @@ def format_squares_piece_text(sq_pc):
 
 def get_piece_colours(board_img, board=None, meth='model'):
     '''
-    Predict piece_model on every square of input board image
+    Methods:
+        model: Predict piece_model on every square of input board image
+        board: Derive from board object
     Output:
         64 character string of {0,1,2}
     '''
@@ -314,8 +348,7 @@ def get_piece_colours(board_img, board=None, meth='model'):
 
             # predict {1, 2} based on piece model built at calibration
             hist = np.array(hist).reshape(1, -1)
-
-            shp, _, _ = square_has_piece(sq_img)
+            shp, _, _ = square_has_piece(sq_img, presence_model)
             if shp:
                 if sq % 2 == (sq // 8) % 2:
                     squares.append(neigh1.predict(hist)[0])
@@ -354,6 +387,7 @@ def label_squares(board_img, recom_move=None, alpha=0.2):
         y = int((y + yr) * SQUARE_WIDTH)
         return x, y
 
+    # draw square names
     overlay = board_img.copy()
     for sq in range(CHESSBOARD_SQUARES):
         x, y = sq_offset(sq, 0.1, 0.8)
@@ -361,11 +395,14 @@ def label_squares(board_img, recom_move=None, alpha=0.2):
 
     cv2.addWeighted(overlay, alpha, board_img, 1 - alpha, 0, board_img)
 
+    # draw recommended move
     if recom_move:
+        # square numbers
         from_sq = chess.SQUARE_NAMES.index(str(recom_move)[0:2])
         to_sq = chess.SQUARE_NAMES.index(str(recom_move)[2:4])
-        board_img = cv2.line(board_img, sq_offset(from_sq, 0.5, 0.5), sq_offset(to_sq, 0.5, 0.5), (0, 0, 255), 3)
 
+        # outline recommended move using line and 2 circles
+        board_img = cv2.line(board_img, sq_offset(from_sq, 0.5, 0.5), sq_offset(to_sq, 0.5, 0.5), (0, 0, 255), 3)
         board_img = cv2.circle(board_img, sq_offset(from_sq, 0.5, 0.5), int(SQUARE_WIDTH / 2), (0, 0, 255), 5)
         board_img = cv2.circle(board_img, sq_offset(to_sq, 0.5, 0.5), int(SQUARE_WIDTH / 7), (0, 0, 255), -1)
 
@@ -402,7 +439,8 @@ def detect_move(board1, board2, meth='string', board=None):
             return from_sq, to_sq
         # castling
         elif changes == 4:
-            # naive checking
+            # naive checking for castling
+            # TODO: en passant
             if changed_sq == [0, 2, 3, 4]:
                 return 4, 2
             elif changed_sq == [4, 5, 6, 7]:
@@ -415,7 +453,9 @@ def detect_move(board1, board2, meth='string', board=None):
                 return input_move()
         else:
             return input_move()
+
     elif meth == 'image diff': # compare using diff between current and previous board image
+        # experimental
         sq_dict = {
             sq:np.mean(
                 cv2.cvtColor(get_square_image(board1, sq), cv2.COLOR_BGR2GRAY) -
@@ -526,18 +566,20 @@ def calibrate(args):
 
         # train piece detection model as save to file
         calib_img2 = project_board(calib_img, corners=corners)
+        presence_model = fit_piece_presence(calib_img2)
         piece_model = fit_piece_colours(calib_img2)
 
         # performance
-        fit_performance(calib_img2, piece_model)
+        fit_performance(calib_img2, piece_model, presence_model)
 
         with open('./calibration/piece_model.pkl', 'wb') as f:
             pickle.dump(piece_model, f)
+        with open('./calibration/presence_model.pkl', 'wb') as f:
+            pickle.dump(presence_model, f)
         print('Piece model trained and saved')
 
         # save second board calibration image
         cv2.imwrite('./calibration/starting-board-projected.jpg', calib_img2)
-
 
         print('Calibration step 2 completed')
 
@@ -585,14 +627,12 @@ def play(args):
             engine.quit()
         return recom_move
 
-
     def display_image_window(name, img, x, y):
         cv2.namedWindow(name, cv2.WINDOW_NORMAL)
         cv2.imshow(name, img)
         cv2.resizeWindow(name, UI_WINDOW_WIDTH, UI_WINDOW_HEIGHT)
         cv2.moveWindow(name, int(x), int(y))
         return True
-
 
     # initialise chessbaord
     board = chess.Board()
@@ -644,7 +684,7 @@ def play(args):
         except:
             pass
         display_image_window('Raw Feed', img, 2 * UI_WINDOW_WIDTH, 0 * UI_WINDOW_HEIGHT)
-        display_image_window('Diff Board', cv2.cvtColor(curr_board_img, cv2.COLOR_BGR2GRAY) - cv2.cvtColor(prev_board_img, cv2.COLOR_BGR2GRAY), 3 * UI_WINDOW_WIDTH, 0 * UI_WINDOW_HEIGHT)
+        #display_image_window('Diff Board', cv2.cvtColor(curr_board_img, cv2.COLOR_BGR2GRAY) - cv2.cvtColor(prev_board_img, cv2.COLOR_BGR2GRAY), 3 * UI_WINDOW_WIDTH, 0 * UI_WINDOW_HEIGHT)
 
         prev_board_img = curr_board_img
         recom_move = None
@@ -694,6 +734,8 @@ if __name__ == '__main__':
         try:
             with open('./calibration/piece_model.pkl', 'rb') as f:
                 piece_model = pickle.load(f)
+            with open('./calibration/presence_model.pkl', 'rb') as f:
+                presence_model = pickle.load(f)
             print('piece model loaded')
         except:
             raise Exception('Calibration step 2 not run yet')
